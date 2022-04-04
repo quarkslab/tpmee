@@ -1,0 +1,25 @@
+image: debian
+
+before_script:
+  - apt update
+  - apt install -y python3 python3-pip git gcc ssh
+
+stages:
+  - build
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+  GIT_SUBMODULE_UPDATE_FLAGS: --jobs 4
+
+build:
+  stage: build
+  script:
+    - sudo ./setup.sh
+    - cd && tpm_proxy && python3 setup.py sdist
+    - cd && tpm_proxy && python3 setup.py bdist
+  artifacts:
+    paths:
+      - ./livebuild/live-image-amd64.hybrid.iso
+      - ./tpm_proxy/dist/tpm_proxy-0.0.1.linux-x86_64.tar.gz
+      - ./tpm_proxy/dist/tpm_proxy-0.0.1.tar.gz
+      - ./livebuild/chroot/usr/local/bin/qemu-system-x86_64

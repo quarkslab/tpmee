@@ -1,0 +1,10 @@
+#!/bin/sh
+
+set -e
+
+lb config noauto \
+    --architectures amd64 \
+    --linux-packages "linux-image" \
+    --ignore-system-defaults \
+    --bootappend-live "boot=live components autologin lang=fr_FR.UTF-8 locales=fr_FR.UTF-8 keyboard-layouts=fr keyboard-model=pc105 timezone=Europe/Paris utc=yes user-default-groups=disk,tss"
+	"${@}"

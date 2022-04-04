@@ -1,0 +1,357 @@
+diff --git a/backends/tpm/tpm_passthrough.c b/backends/tpm/tpm_passthrough.c
+index d5558fae6c..73fd90e2c3 100644
+--- a/backends/tpm/tpm_passthrough.c
++++ b/backends/tpm/tpm_passthrough.c
+@@ -56,6 +56,39 @@ struct TPMPassthruState {
+ 
+ #define TPM_PASSTHROUGH_DEFAULT_DEVICE "/dev/tpm0"
+ 
++// DEBUG
++
++const char *get_tpm_sniff_path(void);
++
++static int sock = -1;
++static void send_data2socket(uint8_t *data, uint32_t data_len, const char* file)
++{
++
++    uint8_t BUFF[1024] = {0};
++
++    uint32_t cnt = 0;
++    while (cnt < data_len)
++    {
++      unsigned int offset = data_len - cnt;
++      if (offset < 1024)
++        memset(BUFF, 0, 1024);
++      else
++        offset = 1024;
++      memcpy(BUFF, data + cnt, offset);
++      cnt += write(sock, BUFF, offset);
++    }
++}
++
++typedef struct
++{
++  uint8_t type;
++  uint16_t length;
++} __attribute__((__packed__)) packet_tpm_t;
++// DEBUG
++
++
++
++
+ /* functions */
+ 
+ static void tpm_passthrough_cancel_cmd(TPMBackend *tb);
+@@ -71,6 +104,42 @@ static int tpm_passthrough_unix_read(int fd, uint8_t *buf, uint32_t len)
+         }
+         goto reread;
+     }
++    // DEBUG
++    // uint16_t real_len = htons(*((uint16_t *) buf + 2));
++    const char *file = get_tpm_sniff_path();
++    if (file != NULL)
++    {
++      uint32_t data_len = ret + 3;
++      packet_tpm_t *data = malloc(data_len * sizeof(uint8_t));
++      data->type = 0x0;
++      data->length = ret;
++      memcpy(data + 1, buf, ret);
++      send_data2socket((uint8_t *)data, data_len, file);
++      free(data);
++      data = NULL;
++
++
++      printf("%d\n", ret);
++      printf("Read on TPM:\n");
++      int stop = 0;
++      for (int i = 0; i < ret; i++)
++      {
++        printf("%02x ", buf[i]);
++        if (i % 16 == 15 || i == ret - 1)
++          printf("\n");
++        if (buf[i] == 0)
++          stop++;
++        else
++          stop = 0;
++        if (stop == 15)
++        {
++          printf("\n");
++          break;
++        }
++      }
++    }
++
++    // DEBUG
+     return ret;
+ }
+ 
+@@ -88,8 +157,107 @@ static void tpm_passthrough_unix_tx_bufs(TPMPassthruState *tpm_pt,
+     *selftest_done = false;
+ 
+     is_selftest = tpm_util_is_selftest(in, in_len);
++    
++    // DEBUG
++    //
++
++    const char *file = get_tpm_sniff_path();
++    if (file != NULL)
++    {
++
++      //const char *file = "/tmp/sniffer_socket";
++
++      if (sock == -1)
++      {
++        struct sockaddr_un saddr;
++        saddr.sun_family = AF_UNIX;
++        strncpy(saddr.sun_path,  file, 100);
++        sock = socket(AF_UNIX, SOCK_STREAM, 0);
++
++        int conn = connect(sock, (struct sockaddr *)&saddr, sizeof(saddr));
++        if (conn != 0)
++        {
++          printf("connection impossible %d\n", errno);
++          exit(conn);
++        }
++      }
++
++      uint32_t data_len = in_len + 3;
++      packet_tpm_t *data = malloc(data_len * sizeof(uint8_t));
++      data->type = 0x1;
++      data->length = in_len;
++      memcpy(data + 1, in, in_len);
++      send_data2socket((uint8_t *)data, data_len, file);
++      free(data);
++      data = NULL;
++
++
++      
++      
++
++
++      printf("Write on TPM:\n");
++      for (int i = 0; i < in_len; i++)
++      {
++        printf("%02x ", in[i]);
++        if (i % 16 == 15 || i == in_len - 1)
++          printf("\n");
++      }
++      // Show inside
++      // tag 2 bytes
++      // size command 4 bytes
++
++      uint16_t tag = htons(*(uint16_t*)in);
++      uint32_t size_command = htonl(*(uint32_t *)((uint8_t *)in + 2));
++      uint32_t command_code = htonl(*(uint32_t *)((uint8_t *)in + 6));
++
++      //if (tag == 0x8001)
++      //  printf("NO SESSION:\n");
++      //else if (tag == 0x8002)
++      //  printf("SESSION:\n");
++
++      printf("\ttype: %s\n", (tag == 0x8001) ? "NO SESSION" : "SESSION");
++      printf("\tsize command: %d\n", size_command);
++      char command[30];
++      if (command_code == 0x144)
++        strcpy(command, "Startup");
++      else if (command_code == 0x143)
++        strcpy(command, "SelfTest");
++      else if (command_code == 0x17a)
++        strcpy(command, "GetCapability");
++      else if (command_code == 0x182)
++        strcpy(command, "PCR_Extend");
++      printf("\tcommand: %04x (%s)\n", command_code, command);
++    }
+ 
+-    ret = qemu_write_full(tpm_pt->tpm_fd, in, in_len);
++    //
++    // DEBUG
++    if (file != NULL)
++    {
++      // Response server
++      packet_tpm_t *data = malloc(3 * sizeof(uint8_t));
++      int unused = read(sock, data, 3);
++      unused = unused;
++      uint8_t *proxy_in = (uint8_t *)in;
++      if (data->type != 0x3)
++      {
++        proxy_in = malloc(data->length * sizeof(uint8_t));
++        unused = read(sock, proxy_in, in_len);
++        unused = unused;
++      }
++      ret = qemu_write_full(tpm_pt->tpm_fd, proxy_in, in_len);
++      if (data->type != 0x3)
++      {
++        free(proxy_in);
++        proxy_in = NULL;
++      }
++      free(data);
++      data = NULL;
++    }
++    else
++    {
++      ret = qemu_write_full(tpm_pt->tpm_fd, in, in_len);
++    }
+     if (ret != in_len) {
+         if (!tpm_pt->tpm_op_canceled || errno != ECANCELED) {
+             error_setg_errno(errp, errno, "tpm_passthrough: error while "
+@@ -101,6 +269,21 @@ static void tpm_passthrough_unix_tx_bufs(TPMPassthruState *tpm_pt,
+     tpm_pt->tpm_executing = false;
+ 
+     ret = tpm_passthrough_unix_read(tpm_pt->tpm_fd, out, out_len);
++    if (file != NULL)
++    {
++      // Response server
++      packet_tpm_t *data = malloc(3 * sizeof(uint8_t));
++      int unused = read(sock, data, 3);
++      unused = unused;
++      if (data->type != 0x3)
++      {
++        unused = read(sock, out, data->length);
++        unused = unused;
++      }
++      free(data);
++      data = NULL;
++    }
++
+     if (ret < 0) {
+         if (!tpm_pt->tpm_op_canceled || errno != ECANCELED) {
+             error_setg_errno(errp, errno, "tpm_passthrough: error while "
+@@ -112,6 +295,18 @@ static void tpm_passthrough_unix_tx_bufs(TPMPassthruState *tpm_pt,
+         error_setg_errno(errp, errno, "tpm_passthrough: received invalid "
+                      "response packet from TPM");
+     }
++    
++    // DEBUG
++    //
++    //printf("Read on TPM:\n");
++    //for (int i = 0; i < out_len; i++)
++    //{
++    //  printf("%02x ", out[i]);
++    //  if (i % 16 == 15 || i == out_len - 1)
++    //    printf("\n");
++    //}
++    //
++    // DEBUG
+ 
+     if (is_selftest && (ret >= sizeof(struct tpm_resp_hdr))) {
+         *selftest_done = tpm_cmd_get_errcode(out) == 0;
+@@ -135,6 +330,7 @@ static void tpm_passthrough_handle_request(TPMBackend *tb, TPMBackendCmd *cmd,
+     tpm_passthrough_unix_tx_bufs(tpm_pt, cmd->in, cmd->in_len,
+                                  cmd->out, cmd->out_len, &cmd->selftest_done,
+                                  errp);
++    // FIXME
+ }
+ 
+ static void tpm_passthrough_reset(TPMBackend *tb)
+diff --git a/linux-user/main.c b/linux-user/main.c
+index fbc9bcfd5f..bb0caa92cb 100644
+--- a/linux-user/main.c
++++ b/linux-user/main.c
+@@ -65,6 +65,7 @@ char *exec_path;
+ int singlestep;
+ static const char *argv0;
+ static const char *gdbstub;
++static const char *tpm_sniff_path = {0};
+ static envlist_t *envlist;
+ static const char *cpu_model;
+ static const char *cpu_type;
+@@ -329,6 +330,16 @@ static void handle_arg_gdb(const char *arg)
+     gdbstub = g_strdup(arg);
+ }
+ 
++static void handle_arg_tpm_sniff(const char *arg)
++{
++    tpm_sniff_path = g_strdup(arg);
++}
++
++char *get_tpm_sniff_path(void)
++{
++  return tpm_sniff_path;
++}
++
+ static void handle_arg_uname(const char *arg)
+ {
+     qemu_uname_release = strdup(arg);
+@@ -438,6 +449,8 @@ static const struct qemu_argument arg_table[] = {
+      "",           ""},
+     {"g",          "QEMU_GDB",         true,  handle_arg_gdb,
+      "port",       "wait gdb connection to 'port'"},
++    {"tpm_sniff",  "QEMU_TPM_SNIFF",    true,  handle_arg_tpm_sniff,
++     "path",   "set socket path to attached"},
+     {"L",          "QEMU_LD_PREFIX",   true,  handle_arg_ld_prefix,
+      "path",       "set the elf interpreter prefix to 'path'"},
+     {"s",          "QEMU_STACK_SIZE",  true,  handle_arg_stack_size,
+@@ -886,6 +899,7 @@ int main(int argc, char **argv, char **envp)
+ 
+     target_cpu_copy_regs(env, regs);
+ 
++
+     if (gdbstub) {
+         if (gdbserver_start(gdbstub) < 0) {
+             fprintf(stderr, "qemu: could not open gdbserver on %s\n",
+@@ -894,6 +908,7 @@ int main(int argc, char **argv, char **envp)
+         }
+         gdb_handlesig(cpu, 0);
+     }
++
+     cpu_loop(env);
+     /* never exits */
+     return 0;
+diff --git a/qemu-options.hx b/qemu-options.hx
+index ba3ae6a42a..d7bc8b87f0 100644
+--- a/qemu-options.hx
++++ b/qemu-options.hx
+@@ -5463,6 +5463,13 @@ SRST
+ ERST
+ 
+ 
++DEF("tpm_sniff", HAS_ARG, QEMU_OPTION_tpm_sniff, \
++    "-tpm_sniff file TPM_SNIFF socket path\n", QEMU_ARCH_ALL)
++SRST
++``-tpm_sniff socket_path``
++    Select a socket path to be connected
++ERST
++
+ HXCOMM This is the last statement. Insert new options before this line!
+ 
+ #undef DEF
+diff --git a/softmmu/vl.c b/softmmu/vl.c
+index 1fe028800f..06984fcb47 100644
+--- a/softmmu/vl.c
++++ b/softmmu/vl.c
+@@ -497,6 +497,25 @@ static QemuOptsList qemu_action_opts = {
+     },
+ };
+ 
++static QemuOptsList qemu_tpm_sniff_opts = {
++    .name = "tpm_sniff",
++    .implied_opt_name = "tpm_sniff",
++    .head = QTAILQ_HEAD_INITIALIZER(qemu_tpm_sniff_opts.head),
++    .merge_lists = true,
++    .desc = {
++        { /* end of list */ }
++    },
++};
++
++static const char *tpm_sniff_socket_path = NULL;
++const char *get_tpm_sniff_path(void);
++
++const char *get_tpm_sniff_path(void)
++{
++  return tpm_sniff_socket_path;
++}
++
++
+ const char *qemu_get_vm_name(void)
+ {
+     return qemu_name;
+@@ -3659,6 +3678,9 @@ void qemu_init(int argc, char **argv, char **envp)
+             case QEMU_OPTION_nouserconfig:
+                 /* Nothing to be parsed here. Especially, do not error out below. */
+                 break;
++            case QEMU_OPTION_tpm_sniff:
++                tpm_sniff_socket_path = optarg;
++                break;
+             default:
+                 if (os_parse_cmd_args(popt->index, optarg)) {
+                     error_report("Option not supported in this build");

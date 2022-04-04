@@ -1,0 +1,15 @@
+#! /bin/bash
+
+cd /etc/skel/exploit/qemu/
+
+#./configure --with-git='tsocks git'
+#./configure
+./configure --with-git-submodules=validate --enable-libusb --target-list=$(uname -m)-softmmu
+./scripts/git-submodule.sh update
+
+
+make -j 16 install
+
+cp ./build/qemu-system-$(uname -m) ../qemu-system
+cd ..
+rm -rf qemu

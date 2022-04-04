@@ -1,0 +1,4 @@
+[submodule "qemu"]
+	path = qemu
+	url = https://gitlab.com/qemu-project/qemu.git
+	branch = v6.2.0-1688-g477c3b934a

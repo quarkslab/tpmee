@@ -1,0 +1,13 @@
+livebuild/cache
+livebuild/live-image-*
+livebuild/chroot*
+livebuild/.build
+livebuild/binary*
+livebuild/build.log
+*.swp
+*.swo
+
+livebuild/config/includes.chroot_after_packages/etc/skel/exploit/requirement.txt
+livebuild/config/includes.chroot_after_packages/etc/skel/exploit/script.py
+livebuild/config/includes.chroot_after_packages/etc/skel/exploit/server.py
+livebuild/config/includes.chroot_after_packages/etc/skel/exploit/test_proxy.py
